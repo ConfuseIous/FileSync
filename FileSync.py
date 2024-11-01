@@ -3,6 +3,8 @@ import shutil
 import filecmp
 import argparse
 
+# BUG: Special characters like é, ñ, cause files to be identified as different, possibly due to encoding issues.
+
 def sync_folders(master_folder, target_folder):
     # Compare the directory trees
     comparison = filecmp.dircmp(master_folder, target_folder)
@@ -30,13 +32,16 @@ def copy_items(master_folder, target_folder, comparison):
             shutil.copy2(master_path, target_path)
             print(f"File copied from {master_path} to {target_path}")
     
-    # For music, there's no need to diff files
-    # # Update files that are different between master and target
-    # for file in comparison.diff_files:
-    #     master_path = os.path.join(master_folder, file)
-    #     target_path = os.path.join(target_folder, file)
-    #     shutil.copy2(master_path, target_path)
-    #     print(f"File updated from {master_path} to {target_path}")
+    # Update files that are different between master and target
+    for file in comparison.diff_files:
+        # Ignore .DS_Store files
+        if file == ".DS_Store":
+            continue
+        master_path = os.path.join(master_folder, file)
+        target_path = os.path.join(target_folder, file)
+        if not (os.path.exists(target_path) and filecmp.cmp(master_path, target_path, shallow=False)):
+            shutil.copy2(master_path, target_path)
+            print(f"File updated from {master_path} to {target_path}")
     
     # Recursively process subdirectories that are common between master and target
     for sub_dir in comparison.common_dirs:
