@@ -3,74 +3,75 @@ import shutil
 import filecmp
 import argparse
 
-# BUG: Special characters like é, ñ, cause files to be identified as different, possibly due to encoding issues.
+IGNORE_FILES = {".DS_Store", "Thumbs.db", "desktop.ini"}
 
-def sync_folders(master_folder, target_folder):
-    # Compare the directory trees
-    comparison = filecmp.dircmp(master_folder, target_folder)
+def should_ignore(name):
+    return name in IGNORE_FILES
 
-    # Copy missing or different files and folders from master to target
-    copy_items(master_folder, target_folder, comparison)
-    
-    # Remove files and folders from target that are not in master
-    remove_extra_items(target_folder, comparison)
+def sync_folders(master, target):
+    print(f"[init] syncing from '{master}' to '{target}'")
+    _sync(master, target)
+    _clean(master, target)
+    print(f"[done] sync complete")
 
-def copy_items(master_folder, target_folder, comparison):
-    # Copy files that are in master but not in target
-    for file in comparison.left_only:
-        master_path = os.path.join(master_folder, file)
-        target_path = os.path.join(target_folder, file)
-        if os.path.isdir(master_path):
-            if not os.path.exists(target_path):  # Check if target directory already exists
-                shutil.copytree(master_path, target_path)
-                print(f"Directory copied from {master_path} to {target_path}")
-            else:
-                # Recursively copy contents if the folder exists
-                sub_comparison = filecmp.dircmp(master_path, target_path)
-                copy_items(master_path, target_path, sub_comparison)
-        else:
-            shutil.copy2(master_path, target_path)
-            print(f"File copied from {master_path} to {target_path}")
-    
-    # Update files that are different between master and target
-    for file in comparison.diff_files:
-        # Ignore .DS_Store files
-        if file == ".DS_Store":
+def _sync(master, target):
+    if not os.path.exists(target):
+        print(f"[mkdir] creating target directory: {target}")
+        os.makedirs(target)
+
+    entries = set(os.listdir(master)) - IGNORE_FILES
+    for name in sorted(entries):
+        m_path = os.path.join(master, name)
+        t_path = os.path.join(target, name)
+
+        if should_ignore(name):
+            print(f"[skip] ignoring: {name}")
             continue
-        master_path = os.path.join(master_folder, file)
-        target_path = os.path.join(target_folder, file)
-        if not (os.path.exists(target_path) and filecmp.cmp(master_path, target_path, shallow=False)):
-            shutil.copy2(master_path, target_path)
-            print(f"File updated from {master_path} to {target_path}")
-    
-    # Recursively process subdirectories that are common between master and target
-    for sub_dir in comparison.common_dirs:
-        new_master_folder = os.path.join(master_folder, sub_dir)
-        new_target_folder = os.path.join(target_folder, sub_dir)
-        sub_comparison = filecmp.dircmp(new_master_folder, new_target_folder)
-        copy_items(new_master_folder, new_target_folder, sub_comparison)
 
-def remove_extra_items(target_folder, comparison):
-    # Remove files and directories that are only in the target folder
-    for file in comparison.right_only:
-        target_path = os.path.join(target_folder, file)
-        if os.path.isdir(target_path):
-            shutil.rmtree(target_path)
-            print(f"Extra directory removed: {target_path}")
+        if os.path.isdir(m_path):
+            print(f"[descend] entering directory: {m_path}")
+            _sync(m_path, t_path)
         else:
-            os.remove(target_path)
-            print(f"Extra file removed: {target_path}")
-    
-    # Recursively process common subdirectories for further extra items
-    for sub_dir in comparison.common_dirs:
-        new_target_folder = os.path.join(target_folder, sub_dir)
-        new_comparison = filecmp.dircmp(os.path.join(comparison.left, sub_dir), new_target_folder)
-        remove_extra_items(new_target_folder, new_comparison)
+            if not os.path.exists(t_path):
+                print(f"[copy-new] {m_path} -> {t_path}")
+                shutil.copy2(m_path, t_path)
+            elif not filecmp.cmp(m_path, t_path, shallow=False):
+                print(f"[copy-diff] {m_path} -> {t_path} (was different)")
+                shutil.copy2(m_path, t_path)
+
+def _clean(master, target):
+    if not os.path.exists(target):
+        return
+
+    master_entries = set(os.listdir(master))
+    target_entries = set(os.listdir(target))
+
+    for name in sorted(target_entries - master_entries):
+        if should_ignore(name):
+            print(f"[skip] ignoring extra: {name}")
+            continue
+
+        t_path = os.path.join(target, name)
+        if os.path.isdir(t_path):
+            print(f"[remove-dir] removing extra directory: {t_path}")
+            shutil.rmtree(t_path)
+        else:
+            print(f"[remove-file] removing extra file: {t_path}")
+            os.remove(t_path)
+
+    for name in sorted(master_entries & target_entries):
+        if should_ignore(name):
+            continue
+        m_path = os.path.join(master, name)
+        t_path = os.path.join(target, name)
+        if os.path.isdir(m_path) and os.path.isdir(t_path):
+            print(f"[descend-clean] checking common subdir: {name}")
+            _clean(m_path, t_path)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("FileSync")
-    parser.add_argument("master_folder", help="Path to the master folder")
-    parser.add_argument("target_folder", help="Path to the target folder")
+    parser = argparse.ArgumentParser("sync")
+    parser.add_argument("master_folder")
+    parser.add_argument("target_folder")
     args = parser.parse_args()
 
     sync_folders(args.master_folder, args.target_folder)
